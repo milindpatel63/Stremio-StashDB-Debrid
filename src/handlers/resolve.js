@@ -1,6 +1,8 @@
 const realdebrid = require('../services/realdebrid');
+const debridlink = require('../services/debridlink');
 const prowlarr = require('../services/prowlarr');
 const { decryptJson } = require('../services/crypto');
+const { pickLargestVideoFile } = require('../utils/videoFiles');
 const crypto = require('crypto');
 const { extractInfoHashFromMagnet } = require('../utils/magnet');
 
@@ -8,28 +10,16 @@ function tokenKey(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex').slice(0, 16);
 }
 
-const inFlight = new Map(); // key -> Promise<string>
-const resolved = new Map(); // key -> { url, exp }
+const inFlight = new Map();
+const resolved = new Map();
 
 function fingerprint(str, len = 12) {
   return crypto.createHash('sha256').update(String(str)).digest('hex').slice(0, len);
 }
 
 function pickLargestVideoFileIndex(files = []) {
-  const videoExts = new Set(['.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.webm', '.mpg', '.mpeg']);
-  let best = null;
-  for (const f of files) {
-    if (!f || typeof f !== 'object') continue;
-    const path = String(f.path || '').toLowerCase();
-    const bytes = typeof f.bytes === 'number' ? f.bytes : (f.bytes ? parseInt(f.bytes, 10) : 0);
-    const extMatch = path.match(/(\.[a-z0-9]{2,5})$/);
-    const ext = extMatch ? extMatch[1] : '';
-    const isVideo = videoExts.has(ext);
-    const isSample = path.includes('sample');
-    if (!isVideo || isSample) continue;
-    if (!best || bytes > best.bytes) best = { id: f.id, bytes };
-  }
-  return best?.id ?? null;
+  const file = pickLargestVideoFile(files);
+  return file?.id ?? null;
 }
 
 async function resolveToDirectUrlFromMagnet(apiToken, magnet) {
@@ -46,7 +36,6 @@ async function resolveToDirectUrlFromMagnet(apiToken, magnet) {
     await realdebrid.selectFiles(apiToken, torrentId, 'all');
   }
 
-  // Poll until RD provides links
   const attempts = 8;
   for (let i = 0; i < attempts; i++) {
     const updated = await realdebrid.getTorrentInfo(apiToken, torrentId);
@@ -55,7 +44,7 @@ async function resolveToDirectUrlFromMagnet(apiToken, magnet) {
       const unres = await realdebrid.unrestrictLink(apiToken, link);
       const directUrl = unres?.download || unres?.link;
       if (!directUrl) throw new Error('Unrestrict failed');
-      console.log('[resolve] unrestrict ok, redirecting');
+      console.log('[resolve] Real-Debrid unrestrict ok, redirecting');
       return directUrl;
     }
     await new Promise(r => setTimeout(r, 1500));
@@ -78,7 +67,6 @@ async function resolveToDirectUrlFromTorrentFile(apiToken, torrentBuf) {
     await realdebrid.selectFiles(apiToken, torrentId, 'all');
   }
 
-  // Poll until RD provides links
   const attempts = 8;
   for (let i = 0; i < attempts; i++) {
     const updated = await realdebrid.getTorrentInfo(apiToken, torrentId);
@@ -87,7 +75,7 @@ async function resolveToDirectUrlFromTorrentFile(apiToken, torrentBuf) {
       const unres = await realdebrid.unrestrictLink(apiToken, link);
       const directUrl = unres?.download || unres?.link;
       if (!directUrl) throw new Error('Unrestrict failed');
-      console.log('[resolve] unrestrict ok, redirecting');
+      console.log('[resolve] Real-Debrid unrestrict ok, redirecting');
       return directUrl;
     }
     await new Promise(r => setTimeout(r, 1500));
@@ -96,7 +84,7 @@ async function resolveToDirectUrlFromTorrentFile(apiToken, torrentBuf) {
   throw new Error('Timed out waiting for Real-Debrid torrent links');
 }
 
-async function resolveToDirectUrl(apiToken, payload) {
+async function resolveRealDebridToDirectUrl(apiToken, payload) {
   const magnet = payload?.magnet || null;
   const downloadUrl = payload?.downloadUrl || null;
 
@@ -105,40 +93,80 @@ async function resolveToDirectUrl(apiToken, payload) {
   }
 
   if (downloadUrl) {
-    const resolved = await prowlarr.resolveDownloadUrlToMagnetOrTorrent(downloadUrl, { wantTorrentBuf: true });
-    if (resolved?.magnet) {
+    const resolvedDl = await prowlarr.resolveDownloadUrlToMagnetOrTorrent(downloadUrl, { wantTorrentBuf: true });
+    if (resolvedDl?.magnet) {
       console.log('[resolve] Derived magnet from downloadUrl');
-      return resolveToDirectUrlFromMagnet(apiToken, resolved.magnet);
+      return resolveToDirectUrlFromMagnet(apiToken, resolvedDl.magnet);
     }
-    if (resolved?.torrentBuf) {
+    if (resolvedDl?.torrentBuf) {
       console.log('[resolve] Using torrent file upload for downloadUrl');
-      return resolveToDirectUrlFromTorrentFile(apiToken, resolved.torrentBuf);
+      return resolveToDirectUrlFromTorrentFile(apiToken, resolvedDl.torrentBuf);
     }
     throw new Error('Could not resolve downloadUrl into magnet or torrent file');
   }
 
-  throw new Error('Missing magnet/downloadUrl');
+  throw new Error('Missing magnet/downloadUrl for Real-Debrid');
+}
+
+async function resolveDebridLinkToDirectUrl(apiToken, payload) {
+  const infoHash = payload?.infoHash || (payload?.magnet ? extractInfoHashFromMagnet(payload.magnet) : null);
+  if (!infoHash) {
+    throw new Error('Debrid-Link requires an info hash (cached torrents only)');
+  }
+
+  const result = await debridlink.resolveCachedInfoHash(apiToken, infoHash, {
+    magnet: payload?.magnet || null
+  });
+  return result.downloadUrl;
+}
+
+function buildCacheKey(decoded) {
+  const provider = decoded?.provider === 'debridlink' ? 'debridlink' : 'realdebrid';
+  const token = decoded?.token;
+  const infoHash = decoded?.infoHash
+    || (decoded?.magnet ? extractInfoHashFromMagnet(decoded.magnet) : null);
+  const downloadUrl = decoded?.downloadUrl || null;
+
+  if (provider === 'debridlink') {
+    return `dl:${tokenKey(token)}:${infoHash || 'unknown'}`;
+  }
+  return `rd:${tokenKey(token)}:${infoHash || (downloadUrl ? `dl:${fingerprint(downloadUrl)}` : 'unknown')}`;
 }
 
 /**
  * HTTP handler for GET /resolve/<payload>
- * payload is AES-GCM encrypted JSON: { token, magnet?, downloadUrl? }
+ * Encrypted JSON:
+ * - Real-Debrid: { provider?: 'realdebrid', token, magnet?, downloadUrl? }
+ * - Debrid-Link (cached only): { provider: 'debridlink', token, infoHash, magnet? }
  */
 async function resolveHandler(req, res, payload) {
   try {
     const decoded = decryptJson(payload);
+    const provider = decoded?.provider === 'debridlink' ? 'debridlink' : 'realdebrid';
     const token = decoded?.token;
     const magnet = decoded?.magnet || null;
     const downloadUrl = decoded?.downloadUrl || null;
-    if (!token || (!magnet && !downloadUrl)) {
+    const infoHash = decoded?.infoHash || (magnet ? extractInfoHashFromMagnet(magnet) : null);
+
+    if (!token) {
       res.statusCode = 400;
       res.end('Bad payload');
       return;
     }
 
-    const infoHash = magnet ? extractInfoHashFromMagnet(magnet) : null;
-    const key = `${tokenKey(token)}:${infoHash || (downloadUrl ? `dl:${fingerprint(downloadUrl)}` : 'unknown')}`;
+    if (provider === 'debridlink') {
+      if (!infoHash) {
+        res.statusCode = 400;
+        res.end('Debrid-Link requires infoHash');
+        return;
+      }
+    } else if (!magnet && !downloadUrl) {
+      res.statusCode = 400;
+      res.end('Bad payload');
+      return;
+    }
 
+    const key = buildCacheKey(decoded);
     const now = Date.now();
     const ttlMs = parseInt(process.env.RESOLVE_CACHE_TTL_MS || String(2 * 60 * 60 * 1000), 10);
     const cached = resolved.get(key);
@@ -157,9 +185,11 @@ async function resolveHandler(req, res, payload) {
       return;
     }
 
-    console.log('[resolve] resolving torrent via Real-Debrid key=', key);
+    console.log(`[resolve] resolving via ${provider} key=`, key);
     const p = (async () => {
-      const directUrl = await resolveToDirectUrl(token, { magnet, downloadUrl });
+      const directUrl = provider === 'debridlink'
+        ? await resolveDebridLinkToDirectUrl(token, decoded)
+        : await resolveRealDebridToDirectUrl(token, decoded);
       resolved.set(key, { url: directUrl, exp: Date.now() + ttlMs });
       return directUrl;
     })();
@@ -183,4 +213,3 @@ async function resolveHandler(req, res, payload) {
 }
 
 module.exports = { resolveHandler };
-

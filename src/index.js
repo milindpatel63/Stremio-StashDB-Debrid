@@ -13,8 +13,8 @@ const { resolveHandler } = require('./handlers/resolve');
 const manifest = {
   id: 'com.stremio.stashdb',
   version: '1.0.0',
-  name: 'StashDB - RealDebrid',
-  description: 'Stream trending scenes from StashDB via Real-Debrid',
+  name: 'StashDB - Debrid',
+  description: 'Stream trending scenes from StashDB via Real-Debrid and/or Debrid-Link (cached only)',
   resources: ['catalog', 'meta', 'stream'],
   types: ['adult'],
   idPrefixes: ['stashdb-scene:', 'stashdb-performer:', 'stashdb-studio:'],
@@ -65,7 +65,13 @@ const manifest = {
       key: 'realDebridApiToken',
       type: 'password',
       title: 'Real-Debrid API Token',
-      required: true
+      required: false
+    },
+    {
+      key: 'debridLinkApiToken',
+      type: 'password',
+      title: 'Debrid-Link API Token',
+      required: false
     }
   ]
 };
@@ -177,7 +183,7 @@ function startAddon() {
       console.log(`   2. Paste: http://localhost:${port}/manifest.json`);
       console.log(`   3. Click "Install" (browse only) or "Configure" (for streaming)`);
       console.log(`\n   💡 Tip: Users can browse without config, but need a`);
-      console.log(`      Real-Debrid token to stream videos.\n`);
+      console.log(`      Real-Debrid and/or Debrid-Link token to stream videos.\n`);
       
       // Start the scraper after HTTP server is ready
       // This ensures Beamup health checks pass before the scraper blocks

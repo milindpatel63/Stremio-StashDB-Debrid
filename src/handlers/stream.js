@@ -3,6 +3,7 @@ const stashdb = require('../services/stashdb');
 const prowlarr = require('../services/prowlarr');
 const torrentCandidates = require('../services/torrentCandidates');
 const { buildDiscoveryQueries } = require('../services/scraper');
+const debridlink = require('../services/debridlink');
 const { encryptJson } = require('../services/crypto');
 const { extractInfoHashFromMagnet } = require('../utils/magnet');
 
@@ -178,7 +179,7 @@ async function ensureCandidates(sceneId, scene) {
 
 async function streamHandler(args, userConfig) {
   const { id } = args;
-  console.log(`[stream] request id=${id} mode=realdebrid_lazy`);
+  console.log(`[stream] request id=${id} mode=debrid_lazy`);
   
   // Handle scenes
   if (id.startsWith('stashdb-scene:')) {
@@ -214,7 +215,8 @@ async function handleSceneStream(sceneId, userConfig) {
   const publicUrl = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
   const hasServerCrypto = !!publicUrl && !!process.env.SECRET_KEY;
   const hasRdConfig = !!(userConfig && userConfig.realDebridApiToken);
-  console.log(`[stream] rdConfig=${hasRdConfig} serverCrypto=${hasServerCrypto} publicUrl=${publicUrl ? 'set' : 'missing'} secretKey=${process.env.SECRET_KEY ? 'set' : 'missing'}`);
+  const hasDlConfig = !!(userConfig && userConfig.debridLinkApiToken);
+  console.log(`[stream] rdConfig=${hasRdConfig} dlConfig=${hasDlConfig} serverCrypto=${hasServerCrypto} publicUrl=${publicUrl ? 'set' : 'missing'} secretKey=${process.env.SECRET_KEY ? 'set' : 'missing'}`);
 
   // Check if candidates are already cached (skip expensive discovery if available)
   let candidates = (scene.debridCandidates || []);
@@ -239,20 +241,26 @@ async function handleSceneStream(sceneId, userConfig) {
 
   const streams = [];
   let rdStreams = 0;
+  let dlStreams = 0;
   let torrentStreams = 0;
 
-  // Make RD enablement state visible in the UI (otherwise user only sees Torrent streams)
-  if (!hasRdConfig) {
+  if (!hasRdConfig && !hasDlConfig) {
     streams.push({
-      name: 'Real-Debrid (setup)',
-      title: 'Configure this addon with your Real-Debrid API token to enable RD-on-click streams.',
-      externalUrl: 'https://real-debrid.com/apitoken'
+      name: 'Debrid (setup)',
+      title: 'Configure this addon with a Real-Debrid and/or Debrid-Link API token to enable on-click streams.',
+      externalUrl: 'https://debrid-link.com/token_app'
     });
-  } else if (!hasServerCrypto) {
+  } else if (!hasServerCrypto && (hasRdConfig || hasDlConfig)) {
     streams.push({
-      name: 'Real-Debrid (server setup)',
-      title: 'Server is missing PUBLIC_URL and/or SECRET_KEY, so RD-on-click streams are disabled.',
-      externalUrl: 'https://real-debrid.com/apitoken'
+      name: 'Debrid (server setup)',
+      title: 'Server is missing PUBLIC_URL and/or SECRET_KEY, so on-click streams are disabled.',
+      externalUrl: 'https://debrid-link.com/token_app'
+    });
+  } else if (hasRdConfig && !hasDlConfig) {
+    streams.push({
+      name: 'Debrid-Link (optional)',
+      title: 'Add a Debrid-Link API token in addon settings for cached-only streams (no uncached downloads).',
+      externalUrl: 'https://debrid-link.com/token_app'
     });
   }
 
@@ -280,6 +288,31 @@ async function handleSceneStream(sceneId, userConfig) {
 
   console.log(`[stream] candidates=${scene.debridCandidates?.length || 0} ranked=${ranked.length}`);
 
+  let dlCachedHashes = new Set();
+  let dlResolveTimeCacheCheck = false;
+  if (hasDlConfig && hasServerCrypto) {
+    const hashesForDl = ranked
+      .map(c => c.infoHash || extractInfoHashFromMagnet(c.magnet))
+      .filter(Boolean);
+    if (hashesForDl.length > 0) {
+      try {
+        const cacheResult = await debridlink.checkCachedHashes(
+          userConfig.debridLinkApiToken,
+          hashesForDl
+        );
+        dlCachedHashes = cacheResult.cached;
+        dlResolveTimeCacheCheck = cacheResult.resolveTimeOnly;
+        if (dlResolveTimeCacheCheck) {
+          console.log('[stream] Debrid-Link /seedbox/cached unavailable; offering on-click streams (cache verified at play)');
+        } else {
+          console.log(`[stream] Debrid-Link cached ${dlCachedHashes.size}/${hashesForDl.length} ranked hashes`);
+        }
+      } catch (err) {
+        console.error('[stream] Debrid-Link cache check failed:', err?.message || err);
+      }
+    }
+  }
+
   for (const cand of ranked) {
     const infoHash = cand.infoHash || extractInfoHashFromMagnet(cand.magnet);
 
@@ -303,14 +336,39 @@ async function handleSceneStream(sceneId, userConfig) {
     // Try to create a magnet for RD; if we can't, we'll fall back to using downloadUrl.
     const magnet = cand.magnet || (cand.infoHash ? buildMagnetFromInfoHash(cand.infoHash, cand.name) : null);
 
-    // Desired behavior:
-    // - Prefer Real-Debrid on-click when enabled (works even when magnet/hash isn't present in Prowlarr response).
-    // - If we have an infoHash, also provide direct torrent playback fallback.
-    let rdStreamAdded = false;
-    if (hasRdConfig && hasServerCrypto) {
+    let debridStreamAdded = false;
+
+    const hashKey = infoHash ? String(infoHash).toLowerCase() : '';
+    const showDlStream = hasDlConfig && hasServerCrypto && infoHash
+      && (dlResolveTimeCacheCheck || dlCachedHashes.has(hashKey));
+
+    if (showDlStream) {
+      try {
+        const payload = encryptJson({
+          provider: 'debridlink',
+          token: userConfig.debridLinkApiToken,
+          infoHash,
+          ...(magnet ? { magnet } : {})
+        });
+        streams.push({
+          name: dlResolveTimeCacheCheck
+            ? 'Torrent (Debrid-Link on click)'
+            : 'Torrent (Debrid-Link cached)',
+          title: titleParts.join('\n'),
+          url: `${publicUrl}/resolve/${payload}`
+        });
+        dlStreams++;
+        debridStreamAdded = true;
+      } catch (e) {
+        // fall through
+      }
+    }
+
+    if (hasRdConfig && hasServerCrypto && !debridStreamAdded) {
       try {
         if (magnet) {
           const payload = encryptJson({
+            provider: 'realdebrid',
             token: userConfig.realDebridApiToken,
             magnet
           });
@@ -320,9 +378,10 @@ async function handleSceneStream(sceneId, userConfig) {
             url: `${publicUrl}/resolve/${payload}`
           });
           rdStreams++;
-          rdStreamAdded = true;
+          debridStreamAdded = true;
         } else if (cand.downloadUrl) {
           const payload = encryptJson({
+            provider: 'realdebrid',
             token: userConfig.realDebridApiToken,
             downloadUrl: cand.downloadUrl
           });
@@ -332,27 +391,27 @@ async function handleSceneStream(sceneId, userConfig) {
             url: `${publicUrl}/resolve/${payload}`
           });
           rdStreams++;
-          rdStreamAdded = true;
+          debridStreamAdded = true;
         }
       } catch (e) {
         // fall through to torrent fallback (if possible)
       }
     }
 
-    if (infoHash && !rdStreamAdded) {
+    if (infoHash && !debridStreamAdded) {
       streams.push({
         name: 'Torrent',
         title: titleParts.join('\n'),
         infoHash
       });
       torrentStreams++;
-    } else if (!infoHash && !rdStreamAdded) {
+    } else if (!infoHash && !debridStreamAdded) {
       // Candidate is not directly playable (no infoHash) and RD can't resolve it (no magnet/downloadUrl).
       // We already filtered most of these out earlier, but keep this as a safety net.
     }
   }
 
-  console.log(`[stream] returningStreams=${streams.length} rdStreams=${rdStreams} torrentStreams=${torrentStreams}`);
+  console.log(`[stream] returningStreams=${streams.length} rdStreams=${rdStreams} dlStreams=${dlStreams} torrentStreams=${torrentStreams}`);
   return { streams };
 }
 

@@ -7,7 +7,6 @@
  */
 
 function parseConfig(config) {
-  // If config is not provided or invalid type, return null
   if (!config) {
     return null;
   }
@@ -15,18 +14,13 @@ function parseConfig(config) {
   try {
     let parsedConfig;
 
-    // Handle object config (from Stremio's config form - already parsed)
     if (typeof config === 'object' && !Buffer.isBuffer(config)) {
       parsedConfig = config;
-    }
-    // Handle string config (URL-encoded or base64)
-    else if (typeof config === 'string') {
-      // Try URL-decoding first (from Stremio's config form in URL)
+    } else if (typeof config === 'string') {
       try {
         const urlDecoded = decodeURIComponent(config);
         parsedConfig = JSON.parse(urlDecoded);
       } catch (e) {
-        // If URL-decoding fails, try base64 (from manual install URL)
         try {
           const base64Decoded = Buffer.from(config, 'base64').toString('utf-8');
           parsedConfig = JSON.parse(base64Decoded);
@@ -34,25 +28,28 @@ function parseConfig(config) {
           return null;
         }
       }
-    }
-    // Invalid type
-    else {
+    } else {
       return null;
     }
 
-    // Validate required fields for streaming (Real-Debrid API token)
-    if (!parsedConfig.realDebridApiToken) {
+    const realDebridApiToken = parsedConfig.realDebridApiToken
+      ? String(parsedConfig.realDebridApiToken).trim()
+      : '';
+    const debridLinkApiToken = parsedConfig.debridLinkApiToken
+      ? String(parsedConfig.debridLinkApiToken).trim()
+      : '';
+
+    if (!realDebridApiToken && !debridLinkApiToken) {
       return null;
     }
 
     return {
-      realDebridApiToken: parsedConfig.realDebridApiToken
+      realDebridApiToken: realDebridApiToken || null,
+      debridLinkApiToken: debridLinkApiToken || null
     };
   } catch (error) {
-    // Silently return null for invalid configs
     return null;
   }
 }
 
 module.exports = { parseConfig };
-
