@@ -3,7 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-
+# prebuilt image
+#    image: milindpatel63/stremio-stashdb
     container_name: stremio-stashdb-addon
 
     restart: unless-stopped
