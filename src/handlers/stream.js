@@ -4,6 +4,7 @@ const prowlarr = require('../services/prowlarr');
 const torrentCandidates = require('../services/torrentCandidates');
 const { buildDiscoveryQueries } = require('../services/scraper');
 const debridlink = require('../services/debridlink');
+const torbox = require('../services/torbox');
 const { encryptJson } = require('../services/crypto');
 const { extractInfoHashFromMagnet } = require('../utils/magnet');
 
@@ -216,7 +217,8 @@ async function handleSceneStream(sceneId, userConfig) {
   const hasServerCrypto = !!publicUrl && !!process.env.SECRET_KEY;
   const hasRdConfig = !!(userConfig && userConfig.realDebridApiToken);
   const hasDlConfig = !!(userConfig && userConfig.debridLinkApiToken);
-  console.log(`[stream] rdConfig=${hasRdConfig} dlConfig=${hasDlConfig} serverCrypto=${hasServerCrypto} publicUrl=${publicUrl ? 'set' : 'missing'} secretKey=${process.env.SECRET_KEY ? 'set' : 'missing'}`);
+  const hasTbConfig = !!(userConfig && userConfig.torboxApiToken);
+  console.log(`[stream] rdConfig=${hasRdConfig} dlConfig=${hasDlConfig} tbConfig=${hasTbConfig} serverCrypto=${hasServerCrypto} publicUrl=${publicUrl ? 'set' : 'missing'} secretKey=${process.env.SECRET_KEY ? 'set' : 'missing'}`);
 
   // Check if candidates are already cached (skip expensive discovery if available)
   let candidates = (scene.debridCandidates || []);
@@ -242,15 +244,16 @@ async function handleSceneStream(sceneId, userConfig) {
   const streams = [];
   let rdStreams = 0;
   let dlStreams = 0;
+  let tbStreams = 0;
   let torrentStreams = 0;
 
-  if (!hasRdConfig && !hasDlConfig) {
+  if (!hasRdConfig && !hasDlConfig && !hasTbConfig) {
     streams.push({
       name: 'Debrid (setup)',
-      title: 'Configure this addon with a Real-Debrid and/or Debrid-Link API token to enable on-click streams.',
+      title: 'Configure this addon with a Real-Debrid, Debrid-Link, and/or TorBox API token to enable on-click streams.',
       externalUrl: 'https://debrid-link.com/token_app'
     });
-  } else if (!hasServerCrypto && (hasRdConfig || hasDlConfig)) {
+  } else if (!hasServerCrypto && (hasRdConfig || hasDlConfig || hasTbConfig)) {
     streams.push({
       name: 'Debrid (server setup)',
       title: 'Server is missing PUBLIC_URL and/or SECRET_KEY, so on-click streams are disabled.',
@@ -290,6 +293,21 @@ async function handleSceneStream(sceneId, userConfig) {
 
   let dlCachedHashes = new Set();
   let dlResolveTimeCacheCheck = false;
+  let tbCachedHashes = new Set();
+  if (hasTbConfig && hasServerCrypto) {
+    const hashesForTb = ranked
+      .map(c => c.infoHash || extractInfoHashFromMagnet(c.magnet))
+      .filter(Boolean);
+    if (hashesForTb.length > 0) {
+      try {
+        tbCachedHashes = await torbox.checkCachedHashes(userConfig.torboxApiToken, hashesForTb);
+        console.log(`[stream] TorBox cached ${tbCachedHashes.size}/${hashesForTb.length} ranked hashes`);
+      } catch (err) {
+        console.error('[stream] TorBox cache check failed:', err?.message || err);
+      }
+    }
+  }
+
   if (hasDlConfig && hasServerCrypto) {
     const hashesForDl = ranked
       .map(c => c.infoHash || extractInfoHashFromMagnet(c.magnet))
@@ -341,6 +359,8 @@ async function handleSceneStream(sceneId, userConfig) {
     const hashKey = infoHash ? String(infoHash).toLowerCase() : '';
     const showDlStream = hasDlConfig && hasServerCrypto && infoHash
       && (dlResolveTimeCacheCheck || dlCachedHashes.has(hashKey));
+    const showTbStream = hasTbConfig && hasServerCrypto && infoHash
+      && tbCachedHashes.has(hashKey);
 
     if (showDlStream) {
       try {
@@ -358,6 +378,26 @@ async function handleSceneStream(sceneId, userConfig) {
           url: `${publicUrl}/resolve/${payload}`
         });
         dlStreams++;
+        debridStreamAdded = true;
+      } catch (e) {
+        // fall through
+      }
+    }
+
+    if (showTbStream && !debridStreamAdded) {
+      try {
+        const payload = encryptJson({
+          provider: 'torbox',
+          token: userConfig.torboxApiToken,
+          infoHash,
+          ...(magnet ? { magnet } : {})
+        });
+        streams.push({
+          name: 'Torrent (TorBox cached)',
+          title: titleParts.join('\n'),
+          url: `${publicUrl}/resolve/${payload}`
+        });
+        tbStreams++;
         debridStreamAdded = true;
       } catch (e) {
         // fall through
@@ -411,7 +451,7 @@ async function handleSceneStream(sceneId, userConfig) {
     }
   }
 
-  console.log(`[stream] returningStreams=${streams.length} rdStreams=${rdStreams} dlStreams=${dlStreams} torrentStreams=${torrentStreams}`);
+  console.log(`[stream] returningStreams=${streams.length} rdStreams=${rdStreams} dlStreams=${dlStreams} tbStreams=${tbStreams} torrentStreams=${torrentStreams}`);
   return { streams };
 }
 

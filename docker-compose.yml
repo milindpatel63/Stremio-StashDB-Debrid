@@ -3,92 +3,21 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    
+
     container_name: stremio-stashdb-addon
-    
+
     restart: unless-stopped
-    
+
     ports:
-      - "7070:7070"
-    
-    environment:
-      # REQUIRED: API Keys & Authentication
-      STASHDB_API_KEY: ${STASHDB_API_KEY}
-      PUBLIC_URL: ${PUBLIC_URL}
-      SECRET_KEY: ${SECRET_KEY}
-      PROWLARR_URL: ${PROWLARR_URL}
-      PROWLARR_API_KEY: ${PROWLARR_API_KEY}
-      
-      # OPTIONAL: Custom configuration
-      PORT: ${PORT:-7070}
-      STASHDB_URL: ${STASHDB_URL:-https://stashdb.org/graphql}
-      STASHDB_PER_PAGE: ${STASHDB_PER_PAGE:-25}
-      META_DESCRIPTION_MAX_LENGTH: ${META_DESCRIPTION_MAX_LENGTH:-1400}
-      STASHDB_WEB_URL: ${STASHDB_WEB_URL:-https://stashdb.org}
-      REALDEBRID_TIMEOUT_MS: ${REALDEBRID_TIMEOUT_MS:-15000}
-      REALDEBRID_URL: ${REALDEBRID_URL:-https://api.real-debrid.com/rest/1.0}
-      DEBRIDLINK_URL: ${DEBRIDLINK_URL:-https://debrid-link.com/api/v2}
-      DEBRIDLINK_TIMEOUT_MS: ${DEBRIDLINK_TIMEOUT_MS:-30000}
-      DEBRIDLINK_CACHED_POLL_MS: ${DEBRIDLINK_CACHED_POLL_MS:-1500}
-      DEBRIDLINK_CACHED_MAX_WAIT_MS: ${DEBRIDLINK_CACHED_MAX_WAIT_MS:-20000}
-      PROWLARR_TIMEOUT_MS: ${PROWLARR_TIMEOUT_MS:-30000}
-      PROWLARR_MAX_REDIRECTS: ${PROWLARR_MAX_REDIRECTS:-3}
+      - "${PORT:-7070}:${PORT:-7070}"
 
-      # Prowlarr search controls
-      PROWLARR_CATEGORIES: ${PROWLARR_CATEGORIES:-6000}
-      PROWLARR_LIMIT: ${PROWLARR_LIMIT:-25}
-      PROWLARR_INDEXER_IDS: ${PROWLARR_INDEXER_IDS:-}
-      PROWLARR_DEBUG: ${PROWLARR_DEBUG:-}
-      PROWLARR_PARSED_LOG: ${PROWLARR_PARSED_LOG:-}
+    # Loads all variables from .env (copy from .env.example). No need to list each key here.
+    env_file:
+      - .env
 
-      # Stream discovery performance tuning
-      CANDIDATE_CACHE_TTL_MS: ${CANDIDATE_CACHE_TTL_MS:-21600000}
-      DISCOVERY_STOP_AFTER_CANDIDATES: ${DISCOVERY_STOP_AFTER_CANDIDATES:-30}
-      DISCOVERY_QUERY_VARIANTS: ${DISCOVERY_QUERY_VARIANTS:-2}
-      DISCOVERY_PREFILTER_CAP: ${DISCOVERY_PREFILTER_CAP:-90}
-      DISCOVERY_QUERY_DELAY_MS: ${DISCOVERY_QUERY_DELAY_MS:-750}
-      STREAM_QUERY_DELAY_AFTER_PARALLEL: ${STREAM_QUERY_DELAY_AFTER_PARALLEL:-}
-      STREAM_CANDIDATES_LIMIT: ${STREAM_CANDIDATES_LIMIT:-10}
-      CANDIDATE_MIN_SCORE: ${CANDIDATE_MIN_SCORE:-400}
-      DEBRID_CANDIDATES_RETURN_LIMIT: ${DEBRID_CANDIDATES_RETURN_LIMIT:-}
-      STREAM_DEBUG: ${STREAM_DEBUG:-}
-
-      # Real-Debrid on click cache
-      RESOLVE_CACHE_TTL_MS: ${RESOLVE_CACHE_TTL_MS:-7200000}
-
-      # Optional background scraper
-      SCRAPE_COUNT: ${SCRAPE_COUNT:-100}
-      SCRAPER_INTERVAL_MS: ${SCRAPER_INTERVAL_MS:-86400000}
-
-      
-      # Logging (optional)
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-    
-    # Resource limits (adjust based on your needs)
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: '1'
-    #       memory: 512M
-    #     reservations:
-    #       cpus: '0.5'
-    #       memory: 256M
-    
-    # Health check
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:7070/manifest.json', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:' + (process.env.PORT || 7070) + '/manifest.json', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 10s
-    
-    # Optional: Volume for persistent cache (if using file-based cache)
-    # volumes:
-    #   - ./cache:/app/cache
-
-    # Logging configuration
-    # logging:
-    #   driver: "json-file"
-    #   options:
-    #     max-size: "10m"
-    #     max-file: "3"

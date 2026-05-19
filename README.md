@@ -10,8 +10,8 @@ Stream adult content from StashDB via Real-Debrid/Debrid-Link. Browse scenes, pe
 
 ```bash
 cp .env.example .env
-# Edit .env with your credentials
-docker-compose up -d
+# Edit .env with your credentials (Docker loads this file automatically)
+docker compose up -d
 ```
 Then in Stremio: Settings → Addons → Install from URL → `http://localhost:7070/manifest.json`
 
@@ -24,7 +24,8 @@ npm start
 
 ## Configuration
 
-Edit `.env` with:
+Edit `.env` with (used by both `npm start` and Docker via `env_file`):
+
 - `STASHDB_API_KEY` - Get from https://stashdb.org/settings#api
 - `PROWLARR_URL` - Your Prowlarr instance (e.g., `https://prowlarr.example.com`)
 - `PROWLARR_API_KEY` - Your Prowlarr API key
@@ -51,12 +52,12 @@ See `.env.example` for all configuration options.
 cp .env.example .env
 nano .env  # Add credentials
 
-# Run
-docker-compose up -d
-docker-compose logs -f
+# Run (compose reads .env for the container and for ${PORT} below)
+docker compose up -d
+docker compose logs -f
 
 # Stop
-docker-compose down
+docker compose down
 ```
 
 ## Troubleshooting

@@ -1,5 +1,6 @@
 const realdebrid = require('../services/realdebrid');
 const debridlink = require('../services/debridlink');
+const torbox = require('../services/torbox');
 const prowlarr = require('../services/prowlarr');
 const { decryptJson } = require('../services/crypto');
 const { pickLargestVideoFile } = require('../utils/videoFiles');
@@ -120,15 +121,29 @@ async function resolveDebridLinkToDirectUrl(apiToken, payload) {
   return result.downloadUrl;
 }
 
+async function resolveTorboxToDirectUrl(apiToken, payload) {
+  const infoHash = payload?.infoHash || (payload?.magnet ? extractInfoHashFromMagnet(payload.magnet) : null);
+  if (!infoHash) {
+    throw new Error('TorBox requires an info hash (cached torrents only)');
+  }
+
+  const result = await torbox.resolveCachedInfoHash(apiToken, infoHash, {
+    magnet: payload?.magnet || null
+  });
+  return result.downloadUrl;
+}
+
 function buildCacheKey(decoded) {
-  const provider = decoded?.provider === 'debridlink' ? 'debridlink' : 'realdebrid';
+  const provider = decoded?.provider === 'debridlink'
+    ? 'debridlink'
+    : (decoded?.provider === 'torbox' ? 'torbox' : 'realdebrid');
   const token = decoded?.token;
   const infoHash = decoded?.infoHash
     || (decoded?.magnet ? extractInfoHashFromMagnet(decoded.magnet) : null);
   const downloadUrl = decoded?.downloadUrl || null;
 
-  if (provider === 'debridlink') {
-    return `dl:${tokenKey(token)}:${infoHash || 'unknown'}`;
+  if (provider === 'debridlink' || provider === 'torbox') {
+    return `${provider === 'torbox' ? 'tb' : 'dl'}:${tokenKey(token)}:${infoHash || 'unknown'}`;
   }
   return `rd:${tokenKey(token)}:${infoHash || (downloadUrl ? `dl:${fingerprint(downloadUrl)}` : 'unknown')}`;
 }
@@ -138,11 +153,14 @@ function buildCacheKey(decoded) {
  * Encrypted JSON:
  * - Real-Debrid: { provider?: 'realdebrid', token, magnet?, downloadUrl? }
  * - Debrid-Link (cached only): { provider: 'debridlink', token, infoHash, magnet? }
+ * - TorBox (cached only): { provider: 'torbox', token, infoHash, magnet? }
  */
 async function resolveHandler(req, res, payload) {
   try {
     const decoded = decryptJson(payload);
-    const provider = decoded?.provider === 'debridlink' ? 'debridlink' : 'realdebrid';
+    const provider = decoded?.provider === 'debridlink'
+      ? 'debridlink'
+      : (decoded?.provider === 'torbox' ? 'torbox' : 'realdebrid');
     const token = decoded?.token;
     const magnet = decoded?.magnet || null;
     const downloadUrl = decoded?.downloadUrl || null;
@@ -154,10 +172,10 @@ async function resolveHandler(req, res, payload) {
       return;
     }
 
-    if (provider === 'debridlink') {
+    if (provider === 'debridlink' || provider === 'torbox') {
       if (!infoHash) {
         res.statusCode = 400;
-        res.end('Debrid-Link requires infoHash');
+        res.end(`${provider === 'torbox' ? 'TorBox' : 'Debrid-Link'} requires infoHash`);
         return;
       }
     } else if (!magnet && !downloadUrl) {
@@ -189,7 +207,9 @@ async function resolveHandler(req, res, payload) {
     const p = (async () => {
       const directUrl = provider === 'debridlink'
         ? await resolveDebridLinkToDirectUrl(token, decoded)
-        : await resolveRealDebridToDirectUrl(token, decoded);
+        : (provider === 'torbox'
+          ? await resolveTorboxToDirectUrl(token, decoded)
+          : await resolveRealDebridToDirectUrl(token, decoded));
       resolved.set(key, { url: directUrl, exp: Date.now() + ttlMs });
       return directUrl;
     })();

@@ -38,14 +38,18 @@ function parseConfig(config) {
     const debridLinkApiToken = parsedConfig.debridLinkApiToken
       ? String(parsedConfig.debridLinkApiToken).trim()
       : '';
+    const torboxApiToken = parsedConfig.torboxApiToken
+      ? String(parsedConfig.torboxApiToken).trim()
+      : '';
 
-    if (!realDebridApiToken && !debridLinkApiToken) {
+    if (!realDebridApiToken && !debridLinkApiToken && !torboxApiToken) {
       return null;
     }
 
     return {
       realDebridApiToken: realDebridApiToken || null,
-      debridLinkApiToken: debridLinkApiToken || null
+      debridLinkApiToken: debridLinkApiToken || null,
+      torboxApiToken: torboxApiToken || null
     };
   } catch (error) {
     return null;
