@@ -1,8 +1,8 @@
-# Stremio StashDB Addon
+# Stremio StashDB Debrid Addon
 
-⚠️ **Fully Vibe-coded project** - Built rapidly, prioritizes functionality over perfect architecture.
+⚠️ **Fully Vibe-coded project**
 
-Stream adult content from StashDB via Real-Debrid/Debrid-Link. Browse scenes, performers, and studios with full metadata.
+Stream adult content from StashDB via Real-Debrid/Debrid-Link/Torbox. Browse scenes, performers, and studios with full metadata.
 
 ## Installation
 
@@ -32,14 +32,14 @@ Edit `.env` with (used by both `npm start` and Docker via `env_file`):
 - `PROWLARR_INDEXER_IDS` (optional) - comma-separated indexer IDs to restrict search (empty = all enabled indexers)
 - `PUBLIC_URL` and `SECRET_KEY` - required to enable Real-Debrid “on click” stream resolution
 
-Real-Debrid/Debrid-Link API token is configured in the Stremio addon settings (not in `.env`).
+Real-Debrid/Debrid-Link/Torbox API token is configured in the Stremio addon settings (not in `.env`).
 
 See `.env.example` for all configuration options.
 
 ## Features
 
 - Browse scenes, performers, studios
-- Real-Debrid/Debrid-Link stream resolution
+- Real-Debrid/Debrid-Link/Torbox stream resolution
 - Prowlarr-only discovery (no Torznab)
 - Smart caching & indexer rate-limit handling
 - Full metadata display
@@ -63,7 +63,7 @@ docker compose down
 ## Troubleshooting
 
 **No streams?**
-- Verify Real-Debrid/Debrid-Link token is valid (Stremio addon settings)
+- Verify Real-Debrid/Debrid-Link/Torbox token is valid (Stremio addon settings)
 - Check Prowlarr is running and accessible
 - Verify PROWLARR_URL and PROWLARR_API_KEY are correct in `.env`
 - Check logs: `docker-compose logs` or console output
@@ -87,7 +87,7 @@ Uses Prowlarr API to search across all enabled torrent indexers:
 1. User browses scenes/performers in Stremio
 2. Addon queries StashDB for metadata
 3. On stream request, runs 2 Prowlarr searches in parallel (scene title, and studio+title)
-4. Returns playable “Real-Debrid/Debrid-Link on click” streams (resolution happens when you click)
+4. Returns playable “Real-Debrid/Debrid-Link/Torbox on click” streams (resolution happens when you click)
 5. Returns playable torrent fallbacks when Real-Debrid info is available
 
 ## License
